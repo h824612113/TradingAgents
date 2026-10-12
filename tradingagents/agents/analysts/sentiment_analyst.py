@@ -38,6 +38,10 @@ from tradingagents.dataflows.vendors.reddit import (
     subreddits_for,
 )
 from tradingagents.dataflows.vendors.stocktwits import fetch_stocktwits_messages
+from tradingagents.dataflows.vendors.cn_sentiment import (
+    fetch_multichannel_sentiment,
+    format_multichannel_sentiment_prompt,
+)
 
 
 def _seven_days_back(trade_date: str) -> str:
@@ -75,6 +79,17 @@ def create_sentiment_analyst(llm):
             ticker, subreddits, start_date=start_date, end_date=end_date, screen=screen
         )
 
+        # Multi-channel Chinese & Global public opinion / sentiment / crisis collector
+        custom_clue = state.get('custom_sentiment_event') or ''
+        company_nm = ''
+        if 'Company:' in instrument_context:
+            try:
+                company_nm = instrument_context.split('Company:')[1].split('(')[0].split(';')[0].strip()
+            except Exception:
+                pass
+        cn_sentiment_data = fetch_multichannel_sentiment(ticker, end_date, company_nm, custom_clue)
+        cn_sentiment_block = format_multichannel_sentiment_prompt(cn_sentiment_data)
+
         system_message = _build_system_message(
             ticker=ticker,
             start_date=start_date,
@@ -82,6 +97,7 @@ def create_sentiment_analyst(llm):
             news_block=news_block,
             stocktwits_block=stocktwits_block,
             reddit_block=reddit_block,
+            cn_sentiment_block=cn_sentiment_block,
             subreddits=subreddits,
         )
 
@@ -135,6 +151,7 @@ def _build_system_message(
     news_block: str,
     stocktwits_block: str,
     reddit_block: str,
+    cn_sentiment_block: str = '',
     subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
 ) -> str:
     """Assemble the sentiment-analyst system message with structured data blocks."""
@@ -169,6 +186,10 @@ Community discussion, without vote or comment counts. Subreddit character matter
 {reddit_block}
 <end_of_reddit>
 
+<start_of_multichannel_sentiment>
+{cn_sentiment_block}
+<end_of_multichannel_sentiment>
+
 ## How to analyze this data (best practices)
 
 1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone. A block headed "Screened by Jev" has had off-topic posts removed; its stance count is a classifier's read of every on-topic post fetched, labelled or not, of which the posts listed are a sample. Read it alongside the user tags.
@@ -183,7 +204,14 @@ Community discussion, without vote or comment counts. Subreddit character matter
 
 6. **Be honest about data limits.** If StockTwits returned only a handful of messages, or one or more sources returned an "<unavailable>" placeholder, the sentiment read is less robust — flag this explicitly in the `confidence` field and the narrative. If the sources are silent on a given subreddit, say so.
 
-7. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
+7. **Prioritize severe negative product/safety crises, regulatory investigations, and consecutive limit-downs (重大负面与跌停事件一票否决级考量).**
+   - If there are critical crisis alerts such as product safety failures (e.g. brake breakage/failure 刹车踏板断裂, fatal accidents, massive recalls, regulatory fraud/investigations 立案调查), or price anomaly alerts showing consecutive limit-downs (连续跌停 / 极端抛盘封死跌停):
+   - You MUST treat these real-world black-swan events and severe market crises as decisive, high-weight BEARISH signals.
+   - Do NOT ignore them even if overseas retail forums or backward-looking news indicators appear quiet. If product safety or brand trust collapses, retail sentiment in domestic forums (Eastmoney Guba / Snowball) and official emergency notices represent the true frontline sentiment.
+   - Accurately reflect these crises in the overall_band (e.g., Bearish or Mildly Bearish) and overall_score (substantially lowered, e.g. 0-3), and detail the potential cascading damages in the 
+arrative.
+
+8. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
 
 8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
 

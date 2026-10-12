@@ -1,4 +1,4 @@
-"""Symbol normalization for vendor calls, and ticker values safe to use in a path.
+﻿"""Symbol normalization for vendor calls, and ticker values safe to use in a path.
 
 Yahoo Finance (the default vendor) uses specific ticker conventions that
 differ from the broker / TradingView / MT5 style symbols users often type:
@@ -70,6 +70,11 @@ _ALIASES = {
 # HKEX codes as Yahoo spells them: the number zero-padded to 4 digits (#957).
 _HK_CODE = re.compile(r"^(\d{1,5})\.HK$")
 _SHANGHAI_SH = re.compile(r"^(\d{6})\.SH$")
+_SHANGHAI_BARE = re.compile(r"^(?:SH)?(60\d{4}|688\d{3}|689\d{3}|900\d{3}|5[168]\d{4}|50\d{4})$")
+_SHENZHEN_SZ = re.compile(r"^(\d{6})\.SZ$")
+_SHENZHEN_BARE = re.compile(r"^(?:SZ)?(000\d{3}|001\d{3}|002\d{3}|003\d{3}|300\d{3}|301\d{3}|200\d{3}|159\d{3}|16\d{4}|18\d{4})$")
+_BEIJING_BJ = re.compile(r"^(\d{6})\.BJ$")
+_BEIJING_BARE = re.compile(r"^(?:BJ)?(8\d{5}|43\d{4}|920\d{3})$")
 
 
 # Crypto quote currencies that all map to Yahoo's USD pair. Yahoo lists only
@@ -136,6 +141,16 @@ def normalize_symbol(raw: str) -> str:
         canonical = f"{int(hk.group(1)):04d}.HK"
     elif sh := _SHANGHAI_SH.match(s):
         canonical = f"{sh.group(1)}.SS"
+    elif sh_bare := _SHANGHAI_BARE.match(s):
+        canonical = f"{sh_bare.group(1)}.SS"
+    elif sz := _SHENZHEN_SZ.match(s):
+        canonical = f"{sz.group(1)}.SZ"
+    elif sz_bare := _SHENZHEN_BARE.match(s):
+        canonical = f"{sz_bare.group(1)}.SZ"
+    elif bj := _BEIJING_BJ.match(s):
+        canonical = f"{bj.group(1)}.BJ"
+    elif bj_bare := _BEIJING_BARE.match(s):
+        canonical = f"{bj_bare.group(1)}.BJ"
     else:
         canonical = s
 
