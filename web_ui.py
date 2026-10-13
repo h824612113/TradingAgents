@@ -380,7 +380,7 @@ current_task = {
     "sections": {}
 }
 
-def run_tradingagents_task(ticker, trade_date, deep_model, quick_model, custom_event="", xueqiu_cookie=""):
+def run_tradingagents_task(ticker, trade_date, deep_model, quick_model, custom_event="", xueqiu_cookie="", fast_mode=True):
     global current_task
     current_task["running"] = True
     current_task["logs"] = [f"[系统] 开始对标的 {ticker} 进行多智能体推演 (基准日期: {trade_date})..."]
@@ -403,6 +403,14 @@ def run_tradingagents_task(ticker, trade_date, deep_model, quick_model, custom_e
         config = DEFAULT_CONFIG.copy()
         config["deep_think_llm"] = deep_model
         config["quick_think_llm"] = quick_model
+        if fast_mode:
+            config["max_debate_rounds"] = 1
+            config["max_risk_discuss_rounds"] = 1
+            current_task["logs"].append("[极速模式] 已启用 Fast Mode：精简辩论与风控审查轮次 (1 轮极限收敛)")
+        else:
+            config["max_debate_rounds"] = 2
+            config["max_risk_discuss_rounds"] = 2
+            current_task["logs"].append("[深度模式] 已启用 Full Mode：多轮深度多空交锋与风控精算")
 
         current_task["logs"].append(f"[配置] Deep 模型: {deep_model} | Quick 模型: {quick_model}")
         current_task["logs"].append(f"[架构] 初始化多智能体辩论图谱 (TradingAgentsGraph)...")
@@ -415,9 +423,29 @@ def run_tradingagents_task(ticker, trade_date, deep_model, quick_model, custom_e
         args = ta.propagator.get_graph_args()
 
         final_state = {}
+        current_task["current_step"] = 1
+        current_task["step_name"] = "数据穿透与多源采集"
+
         for messages, state in ta.stream_run(ta.checkpoint_input(init_state), **args):
             if state:
                 final_state.update(state)
+                # 动态识别当前智能体阶段
+                if any(k in state for k in ["fundamentals_report", "sentiment_report", "technical_report"]):
+                    if current_task["current_step"] < 2:
+                        current_task["current_step"] = 2
+                        current_task["step_name"] = "四维专业研判分析"
+                if "investment_debate_state" in state and state["investment_debate_state"]:
+                    if current_task["current_step"] < 3:
+                        current_task["current_step"] = 3
+                        current_task["step_name"] = "多空阵营对决博弈"
+                if "risk_debate_state" in state and state["risk_debate_state"]:
+                    if current_task["current_step"] < 4:
+                        current_task["current_step"] = 4
+                        current_task["step_name"] = "风控委员会合规审查"
+                if any(k in state for k in ["trader_investment_plan", "final_trade_decision"]):
+                    if current_task["current_step"] < 5:
+                        current_task["current_step"] = 5
+                        current_task["step_name"] = "首席交易总监决断"
                 # 实时提取各阶段分析报告和辩论历史
                 sections_update = {}
                 if "market_report" in state and state["market_report"]:
@@ -763,6 +791,125 @@ HTML_PAGE = """<!DOCTYPE html>
             color: #34d399;
             border: 1px solid rgba(16, 185, 129, 0.3);
         }
+
+        /* 模式选择器样式 */
+        .mode-selector {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 6px;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 12px 16px;
+            border-radius: 8px;
+            background: #0f172a;
+            border: 2px solid #334155;
+            color: #cbd5e1;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.2s ease;
+        }
+        .mode-btn:hover {
+            border-color: #38bdf8;
+            background: #1e293b;
+        }
+        .mode-btn.active {
+            border-color: #38bdf8;
+            background: rgba(56, 189, 248, 0.12);
+            color: #f8fafc;
+            box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+        }
+        .mode-btn-title {
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .mode-btn-desc {
+            font-size: 12px;
+            color: #94a3b8;
+            line-height: 1.4;
+        }
+
+        /* 5阶段流程状态条样式 */
+        .step-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: #0b1120;
+            border: 1px solid #1e293b;
+            border-radius: 8px;
+            padding: 12px 16px;
+            gap: 8px;
+            overflow-x: auto;
+        }
+        .step-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            opacity: 0.45;
+            transition: all 0.3s ease;
+        }
+        .step-item.active {
+            opacity: 1;
+            transform: scale(1.03);
+        }
+        .step-item.completed {
+            opacity: 0.9;
+        }
+        .step-circle {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #1e293b;
+            border: 2px solid #475569;
+            color: #94a3b8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 12px;
+            transition: all 0.3s ease;
+        }
+        .step-item.active .step-circle {
+            background: #0284c7;
+            border-color: #38bdf8;
+            color: #ffffff;
+            box-shadow: 0 0 10px rgba(56, 189, 248, 0.6);
+            animation: pulse-ring 1.8s infinite;
+        }
+        .step-item.completed .step-circle {
+            background: #059669;
+            border-color: #10b981;
+            color: #ffffff;
+        }
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.6); }
+            70% { box-shadow: 0 0 0 8px rgba(56, 189, 248, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); }
+        }
+        .step-info {
+            display: flex;
+            flex-direction: column;
+        }
+        .step-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #cbd5e1;
+        }
+        .step-item.active .step-title {
+            color: #38bdf8;
+        }
+        .step-item.completed .step-title {
+            color: #34d399;
+        }
+        .step-desc {
+            font-size: 10px;
+            color: #64748b;
+        }
+
     </style>
     <script>
     if (!window.marked) {
@@ -1249,6 +1396,37 @@ HTML_PAGE = """<!DOCTYPE html>
             }
         }
 
+
+        let currentAnalysisMode = 'fast';
+
+        function selectAnalysisMode(mode) {
+            currentAnalysisMode = mode;
+            const fastBtn = document.getElementById('modeFastBtn');
+            const fullBtn = document.getElementById('modeFullBtn');
+            if (fastBtn && fullBtn) {
+                if (mode === 'fast') {
+                    fastBtn.classList.add('active');
+                    fullBtn.classList.remove('active');
+                } else {
+                    fullBtn.classList.add('active');
+                    fastBtn.classList.remove('active');
+                }
+            }
+        }
+
+        function updateStepProgress(activeStep) {
+            for (let i = 1; i <= 5; i++) {
+                const el = document.getElementById('step' + i);
+                if (!el) continue;
+                el.classList.remove('active', 'completed');
+                if (i < activeStep) {
+                    el.classList.add('completed');
+                } else if (i === activeStep) {
+                    el.classList.add('active');
+                }
+            }
+        }
+
         function resetCurrentView() {
             updateStepProgress(0);
             const banner = document.getElementById('ratingBanner');
@@ -1333,7 +1511,8 @@ HTML_PAGE = """<!DOCTYPE html>
                     quick_model: quick,
                     custom_event: custom_event,
                     xueqiu_cookie: xueqiu_cookie,
-                    analysis_mode: typeof selectedAnalysisMode !== 'undefined' ? selectedAnalysisMode : 'fast'
+                    analysis_mode: currentAnalysisMode,
+                    fast_mode: (currentAnalysisMode === 'fast')
                 };
 
                 const res = await fetch('/api/start', {
@@ -1375,6 +1554,11 @@ HTML_PAGE = """<!DOCTYPE html>
 
                 logsBox.textContent = data.logs.join('\\n');
                 logsBox.scrollTop = logsBox.scrollHeight;
+
+                // 动态更新 5 阶段状态指示灯
+                if (data.current_step) {
+                    updateStepProgress(data.current_step);
+                }
 
                 // 渲染各部分详细过程
                 if (data.sections) {
@@ -1859,9 +2043,12 @@ class RequestHandler(SimpleHTTPRequestHandler):
                 quick_model = data.get("quick_model", "")
                 custom_event = data.get("custom_event", "")
                 xueqiu_cookie = data.get("xueqiu_cookie", "")
+                fast_mode = data.get("fast_mode", True)
+                if data.get("analysis_mode") == "full":
+                    fast_mode = False
                 t = threading.Thread(
                     target=run_tradingagents_task,
-                    args=(ticker, trade_date, deep_model, quick_model, custom_event, xueqiu_cookie),
+                    args=(ticker, trade_date, deep_model, quick_model, custom_event, xueqiu_cookie, fast_mode),
                     daemon=True
                 )
                 t.start()
