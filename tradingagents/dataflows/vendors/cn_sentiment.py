@@ -16,6 +16,9 @@ Data Sources integrated:
 
 import http.cookiejar
 import os
+import glob
+import sqlite3
+import os
 import urllib.request
 import urllib.parse
 import re
@@ -206,6 +209,134 @@ def fetch_xueqiu_sentiment(ticker: str, company_name: str = '', custom_cookie: s
     return xueqiu_data
 
 
+
+def query_trendradar_local_news(query_terms: list, trade_date: str = "", limit: int = 8) -> list:
+    """Query local TrendRadar SQLite database for hot search headlines (Cls, Wscn, 36Kr, Weibo, Zhihu)."""
+    trendradar_root = os.getenv("TRENDRADAR_DIR", r"G:\WorkBuddyProjs\TrendRadar")
+    news_dir = os.path.join(trendradar_root, "output", "news")
+    if not os.path.isdir(news_dir):
+        return []
+
+    db_files = []
+    if trade_date:
+        candidate = os.path.join(news_dir, f"{trade_date}.db")
+        if os.path.isfile(candidate):
+            db_files.append(candidate)
+
+    if not db_files:
+        all_dbs = sorted(glob.glob(os.path.join(news_dir, "*.db")), reverse=True)
+        if all_dbs:
+            db_files.extend(all_dbs[:2])
+
+    if not db_files:
+        return []
+
+    terms = [t.strip() for t in query_terms if t and len(t.strip()) >= 2]
+    if not terms:
+        return []
+
+    results = []
+    seen = set()
+    for db_path in db_files:
+        try:
+            conn = sqlite3.connect(db_path)
+            cur = conn.cursor()
+            clauses = ["title LIKE ?" for _ in terms]
+            sql = f"""
+                SELECT platform_id, rank, title, url
+                FROM news_items
+                WHERE {" OR ".join(clauses)}
+                ORDER BY rank ASC, crawl_count DESC
+                LIMIT ?
+            """
+            params = [f"%{t}%" for t in terms] + [limit * 2]
+            rows = cur.execute(sql, params).fetchall()
+            conn.close()
+
+            for p_id, rank, title, url in rows:
+                if title in seen:
+                    continue
+                seen.add(title)
+                results.append({
+                    "platform": p_id,
+                    "rank": rank,
+                    "title": title,
+                    "url": url
+                })
+                if len(results) >= limit:
+                    break
+        except Exception:
+            continue
+        if len(results) >= limit:
+            break
+
+    return results
+
+
+def fetch_fund_portfolio_holdings(fund_code: str) -> list:
+    """Fetch Top 10 heavy stock holdings and weights for ETF/LOF/Mutual Funds via Eastmoney."""
+    clean = "".join([c for c in fund_code if c.isdigit()])
+    if len(clean) != 6:
+        return []
+    url = f"https://fundmobapi.eastmoney.com/FundMNewApi/FundMNInverstPosition?FCODE={clean}&deviceid=Wap&plat=Wap&product=EFund&version=2.0.0"
+    headers = {
+        "User-Agent": "EMProjZYTX/8.4.1 (iPhone; iOS 16.0; Scale/3.00)",
+        "Accept": "*/*",
+        "clientInfo": "ttjj-Wap-Wap",
+    }
+    holdings = []
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with _direct_opener.open(req, timeout=4) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            stocks = (data.get("Datas") or {}).get("fundStocks", [])
+            for s in stocks[:10]:
+                code = s.get("GPDM", "")
+                name = s.get("GPJC", "")
+                ratio = s.get("JZBL", "")
+                chg = s.get("PCTNVCHG", "")
+                holdings.append(f"{name} ({code}): 仓位权重 {ratio}% (较上期变动 {chg}%)")
+    except Exception as e:
+        logger.debug("Fetch fund holdings failed: %s", e)
+    return holdings
+
+
+def fetch_china_financial_summary(stock_code: str) -> list:
+    """Fetch official financial reports and growth metrics (Eastmoney F10 Financial Performance)."""
+    clean = "".join([c for c in stock_code if c.isdigit()])
+    if len(clean) != 6:
+        return []
+    url = f"https://datacenter-web.eastmoney.com/api/data/v1/get?reportName=RPT_LICO_FN_CPD&columns=SECURITY_CODE,SECURITY_NAME_ABBR,REPORTDATE,QDATE,BASIC_EPS,TOTAL_OPERATE_INCOME,PARENT_NETPROFIT,WEIGHTAVG_ROE,YSTZ,SJLTZ&filter=(SECURITY_CODE%3D%22{clean}%22)&pageNumber=1&pageSize=4&sortTypes=-1&sortColumns=REPORTDATE"
+    headers = {"User-Agent": UA}
+    reports = []
+    try:
+        req = urllib.request.Request(url, headers=headers)
+        with _direct_opener.open(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            items = data.get("result", {}).get("data", [])
+            for it in items[:4]:
+                r_date = str(it.get("REPORTDATE", ""))[:10]
+                income = it.get("TOTAL_OPERATE_INCOME")
+                inc_yoy = it.get("YSTZ")
+                profit = it.get("PARENT_NETPROFIT")
+                prof_yoy = it.get("SJLTZ")
+                roe = it.get("WEIGHTAVG_ROE")
+                eps = it.get("BASIC_EPS")
+
+                income_str = f"{income / 1e8:.2f} 亿元" if isinstance(income, (int, float)) else "--"
+                profit_str = f"{profit / 1e8:.2f} 亿元" if isinstance(profit, (int, float)) else "--"
+                inc_yoy_str = f"{inc_yoy:.2f}%" if isinstance(inc_yoy, (int, float)) else "--"
+                prof_yoy_str = f"{prof_yoy:.2f}%" if isinstance(prof_yoy, (int, float)) else "--"
+                roe_str = f"{roe:.2f}%" if isinstance(roe, (int, float)) else "--"
+
+                reports.append(
+                    f"【财报期: {r_date}】营业总收入: {income_str} (同比: {inc_yoy_str}) | "
+                    f"归母净利润: {profit_str} (同比: {prof_yoy_str}) | 加权ROE: {roe_str} | EPS: {eps}"
+                )
+    except Exception as e:
+        logger.debug("Fetch financial reports failed: %s", e)
+    return reports
+
 def fetch_multichannel_sentiment(ticker: str, trade_date: str = '', company_name: str = '', custom_event: str = '', xueqiu_cookie: str = '') -> dict:
     """Consolidate comprehensive public sentiment, institutional research, capital flows, announcements and media."""
     clean_digits = ''.join([c for c in ticker if c.isdigit()])
@@ -225,6 +356,9 @@ def fetch_multichannel_sentiment(ticker: str, trade_date: str = '', company_name
     northbound_holdings = []
     block_trades = []
     holder_changes = []
+    trendradar_hot_news = []
+    fund_holdings = []
+    financial_reports = []
 
     # 1. Tencent Stock Quote & Price Limit detection
     if is_cn_stock and clean_digits:
@@ -419,7 +553,14 @@ def fetch_multichannel_sentiment(ticker: str, trade_date: str = '', company_name
         except Exception as e:
             logger.debug('Eastmoney guba error: %s', e)
 
+
     # 10. Xueqiu (雪球) Integration (Agent-Reach style)
+    if is_cn_stock and clean_digits:
+        financial_reports = fetch_china_financial_summary(clean_digits)
+
+    if clean_digits and (clean_digits.startswith(("51", "15", "16", "58", "56", "18", "00", "01")) or "ETF" in company_name or "基金" in company_name):
+        fund_holdings = fetch_fund_portfolio_holdings(clean_digits)
+
     xueqiu_info = fetch_xueqiu_sentiment(ticker, company_name=company_name, custom_cookie=xueqiu_cookie)
     if xueqiu_info.get('alerts'):
         alerts.extend(xueqiu_info['alerts'])
@@ -467,6 +608,25 @@ def fetch_multichannel_sentiment(ticker: str, trade_date: str = '', company_name
         except Exception as e:
             logger.debug('Eastmoney CMS search error: %s', e)
 
+
+    # 11. TrendRadar 本地全网多源热榜 (财联社/华尔街见闻/36氪/知乎/微博)
+    tr_query_terms = [clean_digits]
+    if company_name and len(company_name) >= 2:
+        tr_query_terms.append(company_name)
+    if custom_event and len(custom_event) >= 2:
+        for kw in custom_event.replace("，", " ").replace(",", " ").split():
+            if len(kw) >= 2:
+                tr_query_terms.append(kw)
+
+    tr_items = query_trendradar_local_news(tr_query_terms, trade_date=trade_date, limit=8)
+    for it in tr_items:
+        p_name = it["platform"]
+        rk = it["rank"]
+        ti = it["title"]
+        trendradar_hot_news.append(f"[{p_name} 热榜 #{rk}] {ti}")
+        if any(bad in ti for bad in ("断裂", "刹车", "踏板", "事故", "跌停", "暴跌", "立案", "减持", "雷", "退订")):
+            alerts.append(f"【全网热搜危机预警】[{p_name} #{rk}] {ti}")
+
     if custom_event and custom_event.strip():
         alerts.insert(0, f'【实盘突发重点线索(用户直供)】{custom_event.strip()}')
 
@@ -485,6 +645,9 @@ def fetch_multichannel_sentiment(ticker: str, trade_date: str = '', company_name
         'guba_posts': guba_posts,
         'xueqiu_info': xueqiu_info,
         'news_items': news_items,
+        'trendradar_hot_news': trendradar_hot_news,
+        'fund_holdings': fund_holdings,
+        'financial_reports': financial_reports,
         'custom_event': custom_event.strip()
     }
 
@@ -579,5 +742,27 @@ def format_multichannel_sentiment_prompt(data: dict) -> str:
         lines.append('\n#### 💬 东方财富股吧 散户实时热议与情绪风向 (Eastmoney Guba Buzz):')
         for p in guba_posts[:10]:
             lines.append(f'- {p}')
+
+    # TrendRadar 跨平台全网热榜 (财联社/华尔街见闻/36氪/知乎/微博)
+    tr_news = data.get('trendradar_hot_news', [])
+    if tr_news:
+        lines.append('\n#### 🌐 TrendRadar 跨平台全网实时热搜与媒体热榜 (Cross-Platform Hot Rankings):')
+        lines.append('*(数据源自 TrendRadar 本地全网热榜引擎，涵盖财联社电报/热门、华尔街见闻、36氪、知乎、微博等)*')
+        for it in tr_news[:8]:
+            lines.append(f'- {it}')
+
+    # Fund Top Holdings
+    f_holdings = data.get('fund_holdings', [])
+    if f_holdings:
+        lines.append('\n#### 📊 基金/ETF 前十大重仓股票与行业持仓分布 (Fund Portfolio Holdings):')
+        for fh in f_holdings[:10]:
+            lines.append(f'- {fh}')
+
+    # Financial Performance
+    fin_reps = data.get('financial_reports', [])
+    if fin_reps:
+        lines.append('\n#### 📈 权威官方财报与核心业绩增长指标 (Financial Statements & Growth Rates):')
+        for fr in fin_reps[:4]:
+            lines.append(f'- {fr}')
 
     return '\n'.join(lines)
