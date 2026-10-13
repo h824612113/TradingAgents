@@ -212,22 +212,29 @@ def fetch_xueqiu_sentiment(ticker: str, company_name: str = '', custom_cookie: s
 
 def query_trendradar_local_news(query_terms: list, trade_date: str = "", limit: int = 8) -> list:
     """Query local TrendRadar SQLite database for hot search headlines (Cls, Wscn, 36Kr, Weibo, Zhihu)."""
-    trendradar_root = os.getenv("TRENDRADAR_DIR", r"G:\WorkBuddyProjs\TrendRadar")
-    news_dir = os.path.join(trendradar_root, "output", "news")
-    if not os.path.isdir(news_dir):
+    # 优先查找子模块 ./TrendRadar、环境变量或外部 TrendRadar 目录中的新闻数据库
+    candidate_dirs = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "TrendRadar", "output", "news"),
+        os.path.join(os.getenv("TRENDRADAR_DIR", ""), "output", "news") if os.getenv("TRENDRADAR_DIR") else "",
+        r"G:\WorkBuddyProjs\TrendRadar\output\news"
+    ]
+    news_dirs = [d for d in candidate_dirs if d and os.path.isdir(d)]
+    if not news_dirs:
         return []
 
     db_files = []
     if trade_date:
-        candidate = os.path.join(news_dir, f"{trade_date}.db")
-        if os.path.isfile(candidate):
-            db_files.append(candidate)
+        for nd in news_dirs:
+            candidate = os.path.join(nd, f"{trade_date}.db")
+            if os.path.isfile(candidate) and candidate not in db_files:
+                db_files.append(candidate)
 
     if not db_files:
-        all_dbs = sorted(glob.glob(os.path.join(news_dir, "*.db")), reverse=True)
-        if all_dbs:
-            db_files.extend(all_dbs[:2])
-
+        for nd in news_dirs:
+            all_dbs = sorted(glob.glob(os.path.join(nd, "*.db")), reverse=True)
+            for d in all_dbs[:3]:
+                if d not in db_files:
+                    db_files.append(d)
     if not db_files:
         return []
 

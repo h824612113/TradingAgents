@@ -1,0 +1,3 @@
+[submodule "TrendRadar"]
+	path = TrendRadar
+	url = git@github.com:h824612113/TrendRadar.git
