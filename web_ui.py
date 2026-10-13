@@ -1160,20 +1160,28 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         async function fetchLiveModels() {
-            const url = document.getElementById('backendUrl').value.trim();
-            const key = document.getElementById('apiKey').value.trim();
+            const url = (document.getElementById('backendUrl')?.value || '').trim();
+            const key = (document.getElementById('apiKey')?.value || '').trim();
             const fetchMsg = document.getElementById('fetchMsg');
             const btn = document.getElementById('fetchModelsBtn');
 
             if (!url || !key) {
-                fetchMsg.style.color = '#f59e0b';
-                fetchMsg.textContent = '请先输入 Base URL 和 API Key！';
+                alert('请先输入 Base URL 和 API Key！');
+                if (fetchMsg) {
+                    fetchMsg.style.color = '#f59e0b';
+                    fetchMsg.textContent = '请先输入 Base URL 和 API Key！';
+                }
                 return;
             }
 
-            fetchMsg.style.color = 'var(--accent)';
-            fetchMsg.textContent = '正在向接口拉取在线模型...';
-            btn.disabled = true;
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '⏳ 正在拉取模型中...';
+            }
+            if (fetchMsg) {
+                fetchMsg.style.color = 'var(--accent)';
+                fetchMsg.textContent = '正在向中转接口拉取在线模型...';
+            }
 
             try {
                 const res = await fetch('/api/fetch-models', {
@@ -1182,24 +1190,38 @@ HTML_PAGE = """<!DOCTYPE html>
                     body: JSON.stringify({ backend_url: url, api_key: key })
                 });
                 const data = await res.json();
-                if (data.ok) {
+                if (data.ok && Array.isArray(data.models) && data.models.length > 0) {
                     candidateModels = data.models;
-                    const prevDeep = document.getElementById('deepModel').value;
-                    const prevQuick = document.getElementById('quickModel').value;
+                    const prevDeep = document.getElementById('deepModel')?.value;
+                    const prevQuick = document.getElementById('quickModel')?.value;
                     renderModelOptions(prevDeep, prevQuick);
-                    fetchMsg.style.color = '#10b981';
-                    fetchMsg.textContent = `成功获取 ${candidateModels.length} 个模型！`;
-                    await saveApiConfig();
+                    if (fetchMsg) {
+                        fetchMsg.style.color = '#10b981';
+                        fetchMsg.textContent = `成功获取 ${candidateModels.length} 个模型！`;
+                    }
+                    try {
+                        await saveApiConfig();
+                    } catch(e) {}
                 } else {
-                    fetchMsg.style.color = '#f43f5e';
-                    fetchMsg.textContent = `拉取失败: ${data.msg}`;
+                    const msg = data.msg || '未获取到模型列表';
+                    alert('拉取模型失败: ' + msg);
+                    if (fetchMsg) {
+                        fetchMsg.style.color = '#f43f5e';
+                        fetchMsg.textContent = `拉取失败: ${msg}`;
+                    }
                 }
             } catch (err) {
-                fetchMsg.style.color = '#f43f5e';
-                fetchMsg.textContent = `请求出错: ${err.message}`;
+                console.error('fetchLiveModels error:', err);
+                alert('请求异常: ' + err.message);
+                if (fetchMsg) {
+                    fetchMsg.style.color = '#f43f5e';
+                    fetchMsg.textContent = `请求出错: ${err.message}`;
+                }
             } finally {
-                btn.disabled = false;
-                setTimeout(() => { fetchMsg.textContent = ''; }, 6000);
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = '🔄 从该接口实时拉取模型列表';
+                }
             }
         }
 
