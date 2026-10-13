@@ -1263,36 +1263,83 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         async function startAnalysis() {
-            resetCurrentView();
-            await saveApiConfig();
-            const deep = document.getElementById('deepModel').value;
-            const quick = document.getElementById('quickModel').value;
+            const startBtn = document.getElementById('startBtn');
+            const logsBox = document.getElementById('logsBox');
+            
+            try {
+                resetCurrentView();
+                
+                // 立即给予按钮视觉反馈
+                if (startBtn) {
+                    startBtn.disabled = true;
+                    startBtn.textContent = '⏳ 任务启动中，正在调度各智能体...';
+                }
+                if (logsBox) {
+                    logsBox.textContent = '[系统] 正在向后端发起多智能体推演调度请求...\n';
+                }
 
-            if (!deep || !quick) {
-                alert('请先选择推理模型！');
-                return;
-            }
+                // 保存当前配置
+                try {
+                    await saveApiConfig();
+                } catch (saveErr) {
+                    console.warn('saveApiConfig warning:', saveErr);
+                }
 
-            const payload = {
-                ticker: document.getElementById('tickerInput').value.trim(),
-                date: document.getElementById('dateInput').value,
-                deep_model: deep,
-                quick_model: quick,
-                custom_event: (document.getElementById('customEventInput')?.value || '').trim(),
-                xueqiu_cookie: (document.getElementById('xueqiuCookieInput')?.value || '').trim()
-            };
+                const deepSelect = document.getElementById('deepModel');
+                const quickSelect = document.getElementById('quickModel');
+                const deep = deepSelect ? deepSelect.value : '';
+                const quick = quickSelect ? quickSelect.value : '';
 
-            const res = await fetch('/api/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
+                if (!deep || !quick) {
+                    alert('请先在第 1 部分中选择 Deep-Thinking 与 Quick-Thinking 推理模型！');
+                    if (startBtn) {
+                        startBtn.disabled = false;
+                        startBtn.textContent = '[RUN] 启动全流程多智能体分析';
+                    }
+                    return;
+                }
 
-            if (res.ok) {
-                pollStatus();
+                const ticker = (document.getElementById('tickerInput')?.value || '600418').trim();
+                const date = (document.getElementById('dateInput')?.value || new Date().toISOString().slice(0, 10)).trim();
+                const custom_event = (document.getElementById('customEventInput')?.value || '').trim();
+                const xueqiu_cookie = (document.getElementById('xueqiuCookieInput')?.value || '').trim();
+
+                const payload = {
+                    ticker: ticker,
+                    date: date,
+                    deep_model: deep,
+                    quick_model: quick,
+                    custom_event: custom_event,
+                    xueqiu_cookie: xueqiu_cookie,
+                    analysis_mode: typeof selectedAnalysisMode !== 'undefined' ? selectedAnalysisMode : 'fast'
+                };
+
+                const res = await fetch('/api/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (res.ok) {
+                    if (logsBox) logsBox.textContent += '[系统] 后端响应成功，轮询监控进程已启动！\n';
+                    pollStatus();
+                } else {
+                    const errText = await res.text();
+                    alert('启动任务失败: ' + errText);
+                    if (startBtn) {
+                        startBtn.disabled = false;
+                        startBtn.textContent = '[RUN] 启动全流程多智能体分析';
+                    }
+                }
+            } catch (err) {
+                console.error('startAnalysis error:', err);
+                alert('启动出现异常: ' + err.message);
+                if (startBtn) {
+                    startBtn.disabled = false;
+                    startBtn.textContent = '[RUN] 启动全流程多智能体分析';
+                }
             }
         }
-
         let pollTimer = null;
         async function pollStatus() {
             if (pollTimer) clearInterval(pollTimer);
