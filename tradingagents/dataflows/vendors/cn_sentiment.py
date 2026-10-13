@@ -210,40 +210,87 @@ def fetch_xueqiu_sentiment(ticker: str, company_name: str = '', custom_cookie: s
 
 
 
-def query_trendradar_local_news(query_terms: list, trade_date: str = "", limit: int = 8) -> list:
-    """Query local TrendRadar SQLite database for hot search headlines (Cls, Wscn, 36Kr, Weibo, Zhihu)."""
-    # 优先查找子模块 ./TrendRadar、环境变量或外部 TrendRadar 目录中的新闻数据库
-    candidate_dirs = [
-        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "TrendRadar", "output", "news"),
-        os.path.join(os.getenv("TRENDRADAR_DIR", ""), "output", "news") if os.getenv("TRENDRADAR_DIR") else "",
-        r"G:\WorkBuddyProjs\TrendRadar\output\news"
-    ]
-    news_dirs = [d for d in candidate_dirs if d and os.path.isdir(d)]
-    if not news_dirs:
-        return []
-
-    db_files = []
-    if trade_date:
-        for nd in news_dirs:
-            candidate = os.path.join(nd, f"{trade_date}.db")
-            if os.path.isfile(candidate) and candidate not in db_files:
-                db_files.append(candidate)
-
-    if not db_files:
-        for nd in news_dirs:
-            all_dbs = sorted(glob.glob(os.path.join(nd, "*.db")), reverse=True)
-            for d in all_dbs[:3]:
-                if d not in db_files:
-                    db_files.append(d)
-    if not db_files:
-        return []
-
+def query_trendradar_local_news(query_terms: list, trade_date: str = "", limit: int = 12) -> list:
+    """Query TrendRadar for hot search headlines and multi-day historical events using SearchTools or direct SQLite."""
     terms = [t.strip() for t in query_terms if t and len(t.strip()) >= 2]
     if not terms:
         return []
 
+    # 候选 TrendRadar 根目录
+    candidate_roots = [
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "TrendRadar"),
+        os.getenv("TRENDRADAR_DIR", ""),
+        r"G:\WorkBuddyProjs\TrendRadar"
+    ]
+    valid_roots = [r for r in candidate_roots if r and os.path.isdir(r)]
+
     results = []
     seen = set()
+
+    # 1. 尝试使用 TrendRadar 原生 SearchTools 进行多天历史聚合搜索
+    for tr_root in valid_roots:
+        try:
+            import sys
+            if tr_root not in sys.path:
+                sys.path.insert(0, tr_root)
+            from mcp_server.tools.search_tools import SearchTools
+            st = SearchTools(project_root=tr_root)
+
+            # 确定日期范围（如果提供了交易日，追溯前 7 天）
+            date_range = None
+            if trade_date and len(trade_date) >= 10:
+                try:
+                    dt_end = datetime.strptime(trade_date[:10], "%Y-%m-%d")
+                    dt_start = dt_end - timedelta(days=7)
+                    date_range = {"start": dt_start.strftime("%Y-%m-%d"), "end": dt_end.strftime("%Y-%m-%d")}
+                except Exception:
+                    pass
+
+            for term in terms[:3]:
+                res = st.search_news_unified(
+                    query=term,
+                    search_mode="keyword",
+                    date_range=date_range,
+                    limit=limit,
+                    sort_by="relevance"
+                )
+                items = res.get("data") or res.get("results") or []
+                for it in items:
+                    title = it.get("title", "")
+                    if not title or title in seen:
+                        continue
+                    seen.add(title)
+                    results.append({
+                        "platform": it.get("platform_name") or it.get("platform") or "TrendRadar",
+                        "rank": it.get("rank") or 1,
+                        "title": title,
+                        "date": it.get("date", ""),
+                        "url": it.get("url", "")
+                    })
+                    if len(results) >= limit:
+                        break
+                if len(results) >= limit:
+                    break
+            if results:
+                return results[:limit]
+        except Exception as e:
+            logger.debug("TrendRadar SearchTools query failed on %s: %s", tr_root, e)
+
+    # 2. 降级方案：直接读取 SQLite 多日新闻库
+    candidate_dirs = [os.path.join(r, "output", "news") for r in valid_roots if os.path.isdir(os.path.join(r, "output", "news"))]
+    db_files = []
+    if trade_date:
+        for nd in candidate_dirs:
+            candidate = os.path.join(nd, f"{trade_date}.db")
+            if os.path.isfile(candidate) and candidate not in db_files:
+                db_files.append(candidate)
+
+    for nd in candidate_dirs:
+        all_dbs = sorted(glob.glob(os.path.join(nd, "*.db")), reverse=True)
+        for d in all_dbs[:5]:
+            if d not in db_files:
+                db_files.append(d)
+
     for db_path in db_files:
         try:
             conn = sqlite3.connect(db_path)
@@ -268,6 +315,7 @@ def query_trendradar_local_news(query_terms: list, trade_date: str = "", limit: 
                     "platform": p_id,
                     "rank": rank,
                     "title": title,
+                    "date": os.path.basename(db_path).replace(".db", ""),
                     "url": url
                 })
                 if len(results) >= limit:
@@ -277,7 +325,7 @@ def query_trendradar_local_news(query_terms: list, trade_date: str = "", limit: 
         if len(results) >= limit:
             break
 
-    return results
+    return results[:limit]
 
 
 def fetch_fund_portfolio_holdings(fund_code: str) -> list:
