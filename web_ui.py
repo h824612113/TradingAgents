@@ -461,6 +461,8 @@ def run_tradingagents_task(ticker, trade_date, deep_model, quick_model, custom_e
                     snippet = content[:150].replace("\n", " ")
                     current_task["logs"].append(f"[{name}] {snippet}")
 
+        current_task["current_step"] = 5
+        current_task["step_name"] = "全流程推演已完成"
         current_task["logs"].append(f"[系统] 全流程推演完成，所有智能体报告已生成！")
         ta.record_decision(ticker, trade_date, final_state)
         try:
@@ -827,6 +829,63 @@ HTML_PAGE = """<!DOCTYPE html>
         <div class="card">
             <h2>2. 发起推演任务 (支持全球多市场与国内A股)</h2>
             
+            <!-- 运行深度与模式选择 -->
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 6px; font-weight: 600;">选择推演深度与速度模式：</label>
+                <div class="mode-selector">
+                    <button type="button" class="mode-btn active" id="modeFastBtn" onclick="selectAnalysisMode('fast')">
+                        <div class="mode-btn-title">⚡ 极速诊断模式 (推荐·1~3分钟)</div>
+                        <div class="mode-btn-desc">四维分析师+多源热搜+F10财报穿透，最小化轮次极速出具结论</div>
+                    </button>
+                    <button type="button" class="mode-btn" id="modeFullBtn" onclick="selectAnalysisMode('full')">
+                        <div class="mode-btn-title">🧠 深度博弈模式 (完整版·10~20分钟)</div>
+                        <div class="mode-btn-desc">激活全套多空阵营激烈辩论、风控审查与多轮博弈，适合大资金决策</div>
+                    </button>
+                </div>
+            </div>
+
+            <!-- 5阶段状态指示进度条 -->
+            <div style="margin-bottom: 16px;">
+                <label style="display: block; margin-bottom: 6px; font-weight: 600;">智能体工作流阶段：</label>
+                <div class="step-container" id="stepContainer">
+                    <div class="step-item" id="step1">
+                        <div class="step-circle">1</div>
+                        <div class="step-info">
+                            <span class="step-title">数据穿透</span>
+                            <span class="step-desc">热搜/F10/持仓</span>
+                        </div>
+                    </div>
+                    <div class="step-item" id="step2">
+                        <div class="step-circle">2</div>
+                        <div class="step-info">
+                            <span class="step-title">专业研判</span>
+                            <span class="step-desc">四维分析师</span>
+                        </div>
+                    </div>
+                    <div class="step-item" id="step3">
+                        <div class="step-circle">3</div>
+                        <div class="step-info">
+                            <span class="step-title">多空辩论</span>
+                            <span class="step-desc">Bull vs Bear</span>
+                        </div>
+                    </div>
+                    <div class="step-item" id="step4">
+                        <div class="step-circle">4</div>
+                        <div class="step-info">
+                            <span class="step-title">风控审查</span>
+                            <span class="step-desc">仓位/回撤测算</span>
+                        </div>
+                    </div>
+                    <div class="step-item" id="step5">
+                        <div class="step-circle">5</div>
+                        <div class="step-info">
+                            <span class="step-title">决断归档</span>
+                            <span class="step-desc">评级/点位生成</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <!-- 股市/资产类别选择器 -->
             <div style="margin-bottom: 14px;">
                 <label style="display: block; margin-bottom: 8px;">选择目标市场 / 资产类别：</label>
@@ -1169,6 +1228,7 @@ HTML_PAGE = """<!DOCTYPE html>
         }
 
         function resetCurrentView() {
+            updateStepProgress(0);
             const banner = document.getElementById('ratingBanner');
             if (banner) {
                 banner.style.display = 'none';
